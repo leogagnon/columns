@@ -1,0 +1,7 @@
+datasets/
+.*
+!/.gitignore
+.ipynb_checkpoints
+venv/
+__pycache__/
+wandb/

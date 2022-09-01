@@ -1,0 +1,44 @@
+trainer: 
+  max_epochs: 20
+  reload_dataloaders_every_n_epochs: 1
+  logger:
+    class_path: pytorch_lightning.loggers.WandbLogger
+    init_args: 
+      project: 'GLOM'
+      name: 'base'
+      dir: 'wandb'
+  callbacks: 
+    - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+      init_args: 
+        dirpath: 'checkpoints'
+        every_n_epochs: 1
+
+model:
+  image_size: 28
+  n_channels: 1
+  num_patch_side: 7
+  hidden_dim: 64
+  levels: 2
+  iters: 5
+  contributions: 
+    - 0.15
+    - 0.35
+    - 0.15
+    - 0.35
+  recon_coeff: 1.0
+  local_coeff: 0.1
+  local_consensus_radius: 0
+  optimizer_args: 
+    lr: 0.05
+    decay: 0.0005
+    steps_per_epoch: 44
+    epochs: 2000
+  overlapping_embedding: True
+  reconstruction_end: True
+  latent_reconstruction: True
+  location_embedding: True
+  add_embedding: False
+
+data:
+  data_dir: 'datasets'
+  batch_size: 1024

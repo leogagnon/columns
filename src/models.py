@@ -5,17 +5,14 @@ import torch.nn.functional as F
 from torch import einsum
 from torch import Tensor
 import pytorch_lightning as pl
-from utils import exists, default, SupConLoss, Siren, islands_agreement
+from utils import exists, default, Siren, islands_agreement
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
-import wandb
 from typing import Callable
-from types import SimpleNamespace
 from torch.nn.functional import mse_loss
 from utils import ConcatPositionalEncoding, AddPositionalEncoding
 
 TOKEN_ATTEND_SELF_VALUE = -5e-4
-
 
 # Residual block
 class Residual(pl.LightningModule):
@@ -170,8 +167,7 @@ class ConsensusAttention(pl.LightningModule):
 
 class GLOM(pl.LightningModule):
     def __init__(self,
-                 image_size,
-                 n_channels,
+                 image_shape,
                  num_patch_side,
                  hidden_dim,
                  levels,
@@ -189,64 +185,61 @@ class GLOM(pl.LightningModule):
                  ):
         super(GLOM, self).__init__()
 
-        self.image_size = image_size
+        # Hyperparameters
+        self.n_channels = image_shape[0] # we assume image of shape (c, x, x)
         self.num_patches_side = num_patch_side
-        self.num_patches = self.num_patches_side ** 2
-        self.n_channels = n_channels
         self.iters = iters 
         self.batch_acc = 0
         self.levels = levels
-        self.optimizers_args = SimpleNamespace(**optimizer_args)
+        self.optimizers_args = optimizer_args
         self.overlapping_embedding = overlapping_embedding
         self.reconstruction_end = reconstruction_end
         self.location_embedding = location_embedding
         self.add_embedding = add_embedding
         self.latent_reconstruction = latent_reconstruction
-
-        # Weight of different contributions
         self.wl, self.wBU, self.wTD, self.wA = contributions
-
-        # Coefficients for different part of the loss
         self.local_coeff = local_coeff
         self.recon_coeff = recon_coeff
+
+        self.save_hyperparameters()
 
         # Encoder/Decoder CNNs
         if self.overlapping_embedding:
             self.encoder = nn.Sequential(
-                EncoderOverlapping(in_channels=n_channels, hidden_channels=hidden_dim // 2, out_channels=hidden_dim),
+                EncoderOverlapping(in_channels=self.n_channels, hidden_channels=hidden_dim // 2, out_channels=hidden_dim),
                 Rearrange('b d h w -> b (h w) d')
             )
             self.decoder = nn.Sequential(
                 Rearrange('b (h w) d -> b d h w', h=self.num_patches_side, w=self.num_patches_side),
-                DecoderOverlapping(in_channels=hidden_dim, hidden_channels=hidden_dim // 2, out_channels=n_channels)
+                DecoderOverlapping(in_channels=hidden_dim, hidden_channels=hidden_dim // 2, out_channels=self.n_channels)
             )
         else:
             self.encoder = nn.Sequential(
-                EncoderDisjoint(in_channels=n_channels, out_channels=hidden_dim, patch_size=4),
+                EncoderDisjoint(in_channels=self.n_channels, out_channels=hidden_dim, patch_size=4),
                 Rearrange('b d h w -> b (h w) d')
             )
             self.decoder = nn.Sequential(
                 Rearrange('b (h w) d -> b d h w', h=self.num_patches_side, w=self.num_patches_side),
-                DecoderOverlapping(in_channels=hidden_dim, hidden_channels=hidden_dim // 2, out_channels=n_channels)
+                DecoderOverlapping(in_channels=hidden_dim, hidden_channels=hidden_dim // 2, out_channels=self.n_channels)
             )
 
         self.init_column = nn.Parameter(torch.randn(levels, hidden_dim))  # Init value for a column
         self.attention = ConsensusAttention(self.num_patches_side, local_consensus_radius=local_consensus_radius)
-        self.bottom_up = MLPColumn(self.num_patches, latent_size=hidden_dim, activation=nn.GELU, levels=levels)
+        self.bottom_up = MLPColumn(self.num_patches_side ** 2, latent_size=hidden_dim, activation=nn.GELU, levels=levels)
         
         if self.location_embedding:
             if self.add_embedding:   
                 self.top_down = nn.Sequential(
                     AddPositionalEncoding(self.num_patches_side, self.num_patches_side, hidden_dim),
-                    MLPColumn(self.num_patches, latent_size=hidden_dim, activation=Siren, levels=levels)
+                    MLPColumn(self.num_patches_side ** 2, latent_size=hidden_dim, activation=Siren, levels=levels)
                 )
             else:
                 self.top_down = nn.Sequential(
                     ConcatPositionalEncoding(self.num_patches_side, self.num_patches_side, 16),
-                    MLPColumn(self.num_patches, latent_size=hidden_dim, activation=Siren, levels=levels, penc_size=16)
+                    MLPColumn(self.num_patches_side ** 2, latent_size=hidden_dim, activation=Siren, levels=levels, penc_size=16)
                 )
         else:
-            self.top_down = MLPColumn(self.num_patches, latent_size=hidden_dim, activation=Siren, levels=levels)
+            self.top_down = MLPColumn(self.num_patches_side ** 2, latent_size=hidden_dim, activation=Siren, levels=levels)
 
 
     # Performs an inference step where the state with various contributions
@@ -299,14 +292,14 @@ class GLOM(pl.LightningModule):
                     loss += self.local_coeff * mse_loss(reconstruction, embedding)
                 else:
                     reconstruction = self.decoder(reconstruction)
-                    loss += self.local_coeff * mse_loss(clean, reconstruction)
+                    loss += self.local_coeff * mse_loss(reconstruction, clean)
 
         if self.reconstruction_end:
             if self.latent_reconstruction:
                 loss += self.recon_coeff * mse_loss(reconstruction, embedding)
             else:
                 reconstruction = self.decoder(reconstruction)
-                loss += self.recon_coeff * mse_loss(clean, reconstruction)
+                loss += self.recon_coeff * mse_loss(reconstruction, clean)
 
         self.log("train/loss", loss)
 
@@ -321,15 +314,15 @@ class GLOM(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(),
-            lr=self.optimizers_args.lr,
-            weight_decay=self.optimizers_args.decay,
+            lr=self.optimizers_args['lr'],
+            weight_decay=self.optimizers_args['decay'],
         )
         scheduler_dict = {
             'scheduler': torch.optim.lr_scheduler.OneCycleLR(
                 optimizer,
-                max_lr=self.optimizers_args.lr,
-                epochs=self.optimizers_args.epochs,
-                steps_per_epoch=self.optimizers_args.steps_per_epoch,
+                max_lr=self.optimizers_args['lr'],
+                epochs=self.optimizers_args['epochs'],
+                steps_per_epoch=self.optimizers_args['steps_per_epoch'],
             ),
             'interval': 'step',
         }

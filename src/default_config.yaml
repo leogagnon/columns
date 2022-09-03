@@ -1,21 +1,25 @@
 trainer: 
-  max_epochs: 20
+  default_root_dir: ''
+  accelerator: 'gpu'
+  devices: 1
+  max_epochs: 2000
   reload_dataloaders_every_n_epochs: 1
   logger:
     class_path: pytorch_lightning.loggers.WandbLogger
     init_args: 
       project: 'GLOM'
       name: 'base'
-      dir: 'wandb'
+      dir: ''
   callbacks: 
     - class_path: pytorch_lightning.callbacks.ModelCheckpoint
       init_args: 
-        dirpath: 'checkpoints'
         every_n_epochs: 1
 
 model:
-  image_size: 28
-  n_channels: 1
+  image_shape:
+    - 1
+    - 28
+    - 28
   num_patch_side: 7
   hidden_dim: 64
   levels: 2
@@ -40,5 +44,5 @@ model:
   add_embedding: False
 
 data:
-  data_dir: 'datasets'
+  data_dir: '../datasets'
   batch_size: 1024

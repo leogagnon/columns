@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import einsum
 from torch import Tensor
 import pytorch_lightning as pl
-from utils import exists, default, Siren, islands_agreement
+from utils import exists, default, Siren
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from typing import Callable
@@ -279,8 +279,9 @@ class GLOM(pl.LightningModule):
         loss = 0
 
         # Inference loop and local loss
+        # TODO: check if local loss is contributing too much
         for _ in range(self.iters):
-            state, reconstruction, (bu, td, lat) = self(embedding, state)
+            state, reconstruction, (bu, td, lat) = self.forward(embedding, state)
 
             loss += self.local_coeff * (
                     mse_loss(bu[:, :, 1:], state.detach()) +

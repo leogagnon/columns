@@ -29,7 +29,6 @@ class MNISTDataset(MNISTDataModule):
         
     def default_transforms(self) -> Callable:
         base_transform = Compose([
-                RandAugment(),
                 ToTensor(),
                 Normalize((0.5,), (0.5,)),
             ])

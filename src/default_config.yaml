@@ -44,5 +44,5 @@ model:
   add_embedding: False
 
 data:
-  data_dir: '../datasets'
+  data_dir: 'datasets'
   batch_size: 1024

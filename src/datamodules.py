@@ -1,9 +1,6 @@
 from typing import Optional, Union, Any, Callable
-from torchvision.transforms import Lambda, Compose, CenterCrop, RandAugment, AutoAugment, AutoAugmentPolicy, RandomCrop, \
-    RandomInvert, RandomPosterize, RandomSolarize, RandomResizedCrop, RandomAffine, GaussianBlur, RandomHorizontalFlip, \
-    Resize, RandomApply, ColorJitter, RandomGrayscale, RandomPerspective, RandomRotation, ToTensor, Normalize, \
-    RandomErasing, CenterCrop
-from pl_bolts.datamodules import MNISTDataModule, FashionMNISTDataModule, CIFAR10DataModule, ImagenetDataModule
+from torchvision.transforms import Compose, ToTensor, Normalize
+from pl_bolts.datamodules import MNISTDataModule
 from custom_transforms import GaussianNoise, RandomPatchErasing, CleanCorruptPair
 
 class MNISTDataset(MNISTDataModule):

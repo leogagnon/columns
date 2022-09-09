@@ -5,92 +5,18 @@ import torch.nn.functional as F
 from torch import einsum
 from torch import Tensor
 import pytorch_lightning as pl
-from utils import exists, default, Siren
+from utils import Siren
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from typing import Callable
 from torch.nn.functional import mse_loss
 from utils import ConcatPositionalEncoding, AddPositionalEncoding
+from sklearn.decomposition import PCA
+import wandb
+import matplotlib.pyplot as plt
+from models.cnns import *
 
 TOKEN_ATTEND_SELF_VALUE = -5e-4
-
-# Residual block
-class Residual(pl.LightningModule):
-    def __init__(self, channels):
-        super(Residual, self).__init__()
-        self.block = nn.Sequential(
-            nn.ReLU(True),
-            nn.Conv2d(channels, channels, 3, 1, 1, bias=False),
-            nn.BatchNorm2d(channels),
-            nn.ReLU(True),
-            nn.Conv2d(channels, channels, 1, bias=False),
-            nn.BatchNorm2d(channels)
-        )
-
-    def forward(self, x):
-        return x + self.block(x)
-
-
-# CNN embedding layer (same as in VQ-VAE)
-# Downscales the image size by a factor of 4
-class EncoderOverlapping(pl.LightningModule):
-    def __init__(self, in_channels, out_channels, hidden_channels):
-        super(EncoderOverlapping, self).__init__()
-        self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_channels, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(hidden_channels),
-            nn.ReLU(True),
-            nn.Conv2d(hidden_channels, hidden_channels, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(hidden_channels),
-            Residual(hidden_channels),
-            Residual(hidden_channels),
-            nn.Conv2d(hidden_channels, out_channels, 1),
-        )
-
-    def forward(self, x):
-        return self.encoder(x)
-
-
-# Deconvolution network which has the inverse structure of Encoder
-# Upscale the image by a factor of 4
-class DecoderOverlapping(pl.LightningModule):
-    def __init__(self, in_channels, out_channels, hidden_channels):
-        super(DecoderOverlapping, self).__init__()
-        self.decoder = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_channels, 1, bias=False),
-            nn.BatchNorm2d(hidden_channels),
-            Residual(hidden_channels),
-            Residual(hidden_channels),
-            nn.ConvTranspose2d(hidden_channels, hidden_channels, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(hidden_channels),
-            nn.ReLU(True),
-            nn.ConvTranspose2d(hidden_channels, hidden_channels, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(hidden_channels),
-            nn.ReLU(True),
-            nn.Conv2d(hidden_channels, out_channels, 1)
-        )
-
-    def forward(self, x):
-        return self.decoder(x)
-
-
-class EncoderDisjoint(pl.LightningModule):
-    def __init__(self, in_channels, out_channels, patch_size):
-        super(EncoderDisjoint, self).__init__()
-        self.encoder = nn.Conv2d(in_channels, out_channels, kernel_size=patch_size, stride=patch_size)
-
-    def forward(self, x):
-        return self.encoder(x)
-
-
-class DecoderDisjoint(pl.LightningModule):
-    def __init__(self, in_channels, out_channels, patch_size):
-        super(DecoderDisjoint, self).__init__()
-        self.decoder = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=patch_size, stride=patch_size)
-
-    def forward(self, x):
-        return self.decoder(x)
-
 
 # Uses 1D convolutions to compute vertical contributions over all patches
 class MLPColumn(pl.LightningModule):
@@ -127,7 +53,7 @@ class MLPColumn(pl.LightningModule):
         levels = self.net(levels)
         return levels
 
-
+# Lateral attention
 class ConsensusAttention(pl.LightningModule):
     def __init__(self, num_patches_side, local_consensus_radius=0):
         super().__init__()
@@ -173,58 +99,35 @@ class GLOM(pl.LightningModule):
                  levels,
                  iters,
                  contributions,
-                 local_coeff,
-                 recon_coeff,
-                 local_consensus_radius,
                  optimizer_args,
-                 overlapping_embedding,
-                 reconstruction_end,
-                 latent_reconstruction,
+                 encoder,
+                 decoder,
                  location_embedding,
-                 add_embedding
+                 add_embedding,
                  ):
         super(GLOM, self).__init__()
+        self.save_hyperparameters()
 
         # Hyperparameters
         self.n_channels = image_shape[0] # we assume image of shape (c, x, x)
         self.num_patches_side = num_patch_side
-        self.iters = iters 
-        self.batch_acc = 0
+        self.patch_size = image_shape[1] // num_patch_side
+        self.hidden_dim = hidden_dim
         self.levels = levels
+        self.iters = iters 
         self.optimizers_args = optimizer_args
-        self.overlapping_embedding = overlapping_embedding
-        self.reconstruction_end = reconstruction_end
         self.location_embedding = location_embedding
         self.add_embedding = add_embedding
-        self.latent_reconstruction = latent_reconstruction
         self.wl, self.wBU, self.wTD, self.wA = contributions
-        self.local_coeff = local_coeff
-        self.recon_coeff = recon_coeff
 
-        self.save_hyperparameters()
+        encoder_cls = EncoderDisjoint if encoder == 'patch' else EncoderOverlapping
+        decoder_cls = DecoderDisjoint if decoder == 'patch' else DecoderOverlapping
 
-        # Encoder/Decoder CNNs
-        if self.overlapping_embedding:
-            self.encoder = nn.Sequential(
-                EncoderOverlapping(in_channels=self.n_channels, hidden_channels=hidden_dim // 2, out_channels=hidden_dim),
-                Rearrange('b d h w -> b (h w) d')
-            )
-            self.decoder = nn.Sequential(
-                Rearrange('b (h w) d -> b d h w', h=self.num_patches_side, w=self.num_patches_side),
-                DecoderOverlapping(in_channels=hidden_dim, hidden_channels=hidden_dim // 2, out_channels=self.n_channels)
-            )
-        else:
-            self.encoder = nn.Sequential(
-                EncoderDisjoint(in_channels=self.n_channels, out_channels=hidden_dim, patch_size=4),
-                Rearrange('b d h w -> b (h w) d')
-            )
-            self.decoder = nn.Sequential(
-                Rearrange('b (h w) d -> b d h w', h=self.num_patches_side, w=self.num_patches_side),
-                DecoderOverlapping(in_channels=hidden_dim, hidden_channels=hidden_dim // 2, out_channels=self.n_channels)
-            )
-
-        self.init_column = nn.Parameter(torch.randn(levels, hidden_dim))  # Init value for a column
-        self.attention = ConsensusAttention(self.num_patches_side, local_consensus_radius=local_consensus_radius)
+        self.encoder = encoder_cls(in_channels=self.n_channels, out_channels=hidden_dim, patch_size=self.patch_size)
+        self.decoder = decoder_cls(in_channels=hidden_dim, out_channels=self.n_channels, patch_size=self.patch_size, num_patches_side=num_patch_side)
+        
+        self.init_column = nn.Parameter(torch.randn(levels, hidden_dim), requires_grad=False) 
+        self.attention = ConsensusAttention(self.num_patches_side)
         self.bottom_up = MLPColumn(self.num_patches_side ** 2, latent_size=hidden_dim, activation=nn.GELU, levels=levels)
         
         if self.location_embedding:
@@ -265,6 +168,23 @@ class GLOM(pl.LightningModule):
         )).sum(dim=0)
 
         return state[:, :, 1:], state[:, :, 0], (bottom_up_out, top_down_out, lateral_out)
+    
+    # Runs the model for n_iter on the batch of image, output final state and reconstruction
+    def infer(self, image_batch, n_iter=5, return_state=False):
+
+        self.eval()
+
+        embedding = self.encoder(image_batch)
+        state = repeat(self.init_column, 'l d -> b n l d', b=embedding.shape[0], n=embedding.shape[1])
+        for _ in range(n_iter):
+            state, latent_reconstruction, _ = self.forward(embedding, state)
+
+        reconstruction = self.decoder(latent_reconstruction)
+
+        if return_state:
+            return reconstruction, state
+        else:
+            return reconstruction 
 
     def training_step(self, train_batch, batch_idx):
         global reconstruction # Not sure if its needed but ehhh
@@ -276,41 +196,54 @@ class GLOM(pl.LightningModule):
         # Initialize the state
         state = repeat(self.init_column, 'l d -> b n l d', b=embedding.shape[0], n=embedding.shape[1])
 
-        loss = 0
+        loss = 0 
 
         # Inference loop and local loss
-        # TODO: check if local loss is contributing too much
         for _ in range(self.iters):
+            # Stop gradient from propagating throught time
+            state = state.detach()
             state, reconstruction, (bu, td, lat) = self.forward(embedding, state)
+            state = state.detach()
 
-            loss += self.local_coeff * (
-                    mse_loss(bu[:, :, 1:], state.detach()) +
-                    mse_loss(td[:, :, 1:], state.detach()) +
-                    mse_loss(lat[:, :, 1:], state.detach())
+            loss += (
+                    mse_loss(bu[:, :, 1:], state) +
+                    mse_loss(td[:, :, 1:], state) +
+                    mse_loss(lat[:, :, 1:], state)
             )
-            if not self.reconstruction_end:
-                if self.latent_reconstruction:
-                    loss += self.local_coeff * mse_loss(reconstruction, embedding)
-                else:
-                    reconstruction = self.decoder(reconstruction)
-                    loss += self.local_coeff * mse_loss(reconstruction, clean)
-
-        if self.reconstruction_end:
-            if self.latent_reconstruction:
-                loss += self.recon_coeff * mse_loss(reconstruction, embedding)
-            else:
-                reconstruction = self.decoder(reconstruction)
-                loss += self.recon_coeff * mse_loss(reconstruction, clean)
-
+            
+            reconstruction = self.decoder(reconstruction)
+            loss += mse_loss(reconstruction, clean)
+        
         self.log("train/loss", loss)
 
         return loss
 
     def validation_step(self, val_batch, batch_idx):
-        pass
+        
+        clean, corrupt = val_batch[0]
+        reconstruction, state = self.infer(corrupt, return_state=True)
+
+        loss = mse_loss(reconstruction, clean)
+
+        pca = PCA()
+        for i in range(self.levels): 
+            samples = state.flatten(start_dim=0, end_dim=1)[:,i].detach().cpu().numpy()
+            pc = pca.fit(samples)
+            plt.plot(pc.explained_variance_ratio_)
+            plt.axis([0,self.hidden_dim,0,1])
+            wandb.log({f"val/explained_variance/level-{i}": wandb.Image(plt)})
+            plt.clf()
+
+        self.log("val/recon_loss", loss)
+        self.logger.log_image("val/samples", images=[clean[0,0],corrupt[0,0],reconstruction[0,0]], caption=["clean", "corrupt", "reconstruction"])
+
 
     def test_step(self, test_batch, batch_idx):
-        pass
+        clean, corrupt = test_batch[0]
+        reconstruction = self.infer(corrupt)
+        loss = mse_loss(reconstruction, clean)
+
+        return reconstruction, loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(

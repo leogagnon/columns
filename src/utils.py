@@ -30,9 +30,10 @@ class Siren(pl.LightningModule):
 class AddPositionalEncoding(pl.LightningModule):
     def __init__(self, h, w, d):
         super(AddPositionalEncoding, self).__init__()
-        self.penc = rearrange(PositionalEncoding2D(d).forward(
+        penc = rearrange(PositionalEncoding2D(d).forward(
             torch.zeros((1, h, w, d))
             ).squeeze(), 'h w d -> () (h w) () d') # b n l d
+        self.register_buffer('penc', penc)
         self.penc.requires_grad = False
     def forward(self, x):
         return x.add(self.penc)
@@ -100,6 +101,3 @@ class PositionalEncoding2D(pl.LightningModule):
         """
         emb = torch.stack((sin_inp.sin(), sin_inp.cos()), dim=-1)
         return torch.flatten(emb, -2, -1)
-
-
-

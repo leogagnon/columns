@@ -1,0 +1,52 @@
+program: train.py
+method: bayes
+metric:
+  goal: minimize
+  name: val/recon_loss
+parameters:
+  model.add_embedding:
+    distribution: categorical
+    values:
+      - true
+      - false
+  model.hidden_dim:
+    distribution: int_uniform
+    max: 40
+    min: 10
+  model.iters:
+    distribution: int_uniform
+    max: 8
+    min: 2
+  model.latent_reconstruction:
+    distribution: categorical
+    values:
+      - true
+      - false
+  model.levels:
+    distribution: int_uniform
+    max: 4
+    min: 1
+  model.local_coeff:
+    distribution: uniform
+    max: 0.2
+    min: 0.05
+  model.local_loss:
+    distribution: categorical
+    values:
+      - true
+      - false
+  model.location_embedding:
+    distribution: categorical
+    values:
+      - true
+      - false
+  model.overlapping_embedding:
+    distribution: categorical
+    values:
+      - true
+      - false
+  model.reconstruction_end:
+    distribution: categorical
+    values:
+      - true
+      - false

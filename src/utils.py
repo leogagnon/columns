@@ -101,3 +101,36 @@ class PositionalEncoding2D(pl.LightningModule):
         """
         emb = torch.stack((sin_inp.sin(), sin_inp.cos()), dim=-1)
         return torch.flatten(emb, -2, -1)
+
+# Applies a random patch mask to a batch of image
+class RandomPatchMask(pl.LightningModule):
+
+    def __init__(self, patch_size, p=0.5, value=0., inplace=True, return_patch_mask=True):
+        super().__init__()
+        self.patch_size = patch_size
+        self.p = p
+        self.value = value
+        self.inplace = inplace
+        self.return_patch_mask = return_patch_mask
+
+    def forward(self, img_batch):
+        b, c, h, w = img_batch.shape
+        num_patch_side = h // self.patch_size
+        num_patch = num_patch_side ** 2
+        num_masked = int(self.p * num_patch)
+
+        # Compute which patch to mask
+        randperm = torch.rand((b, num_patch)).argsort(dim=-1) # Batched randperm
+        patch_mask = torch.cat([torch.ones((b,num_masked)), torch.zeros((b,num_patch - num_masked))], dim=-1)[torch.arange(b).unsqueeze(-1), randperm]
+        patch_mask = patch_mask.view((b, num_patch_side, num_patch_side))
+
+        # Kronecker product to produce mask
+        pixel_mask = torch.kron(patch_mask, torch.ones((c, self.patch_size, self.patch_size))).bool()
+
+        # Apply mask
+        img_batch[pixel_mask.unsqueeze(1)] = self.value
+
+        if self.return_patch_mask:
+            return img_batch, patch_mask.view((b, num_patch)).bool()
+        else:
+            return img_batch

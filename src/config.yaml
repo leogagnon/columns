@@ -1,0 +1,56 @@
+trainer: 
+  accelerator: 'gpu'
+  devices: 1
+  log_every_n_steps: 46
+  deterministic: True
+  max_epochs: 40
+  logger:
+    class_path: pytorch_lightning.loggers.WandbLogger
+    init_args: 
+      project: GLOM1
+      dir: ''
+      log_model: True
+  callbacks: 
+    - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+      init_args: 
+        monitor: val/loss
+        mode: min
+        save_top_k: 1
+        dirpath: ckpt/    
+model:
+  in_channels: 1
+  image_side: 28
+  patch_side: 4
+  cell_dim: 64
+  n_level: 3
+  n_iter: 10
+  w_td: 1
+  w_bu: 1.5
+  w_att: 1
+  w_prev: 2
+  location_embedding: True
+  add_embedding: False
+  encoder: 'patch'
+  decoder: 'patch'
+  td_activation: 'siren' 
+  attention_radius: 3
+  softmax_T: 0.6
+  reg_coeff: 0.1
+  noise_std: 0.01
+  patch_mask_prob: 0.3
+  local_loss: False
+  
+optimizer:
+  class_path: torch.optim.AdamW
+  init_args:
+    lr: 0.05
+    weight_decay: 0.0005
+lr_scheduler:
+  class_path: torch.optim.lr_scheduler.OneCycleLR
+  init_args:
+    max_lr: ${optimizer.init_args.lr}
+    epochs: ${trainer.max_epochs}
+    steps_per_epoch: 46
+data:
+  data_dir: datasets
+  batch_size: 1024

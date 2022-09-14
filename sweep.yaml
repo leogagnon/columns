@@ -1,0 +1,51 @@
+program: train.py
+method: random
+metric:
+  goal: minimize
+  name: "val/loss"
+parameters:
+  model.n_level:
+    values: [2,3]
+    distribution: categorical
+  model.n_iter:
+    min: 5
+    max: 10
+    distribution: int_uniform
+  model.location_embedding:
+    values: [True, False]
+    distribution: categorical
+  model.attention_radius:
+    values: [0,2,6]
+    distribution: categorical
+  model.cell_dim:
+    min: 32
+    max: 96
+    distribution: int_uniform
+  model.reg_coeff:
+    min: 0.2
+    max: 1.0
+    distribution: uniform
+  model.noise_std: 
+    min: 0.01
+    max: 0.1
+    distribution: uniform
+  model.patch_mask_prob:
+    values: [0., 0.1, 0.2 , 0.3]
+  model.td_activation:
+    values: [siren, gelu]
+    distribution: categorical
+  model.local_loss:
+    values: [True, False]
+    distribution: categorical
+  model.softmax_T:
+    min: 0.3
+    max: 0.8
+    distribution: uniform
+  optimizer.init_args.lr: 
+    min: 0.001
+    max: 0.05
+    distribution: uniform
+  data.batch_size:
+    values: [1000, 1500]
+    distribution: categorical
+  

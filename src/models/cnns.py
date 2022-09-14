@@ -1,6 +1,8 @@
 import torch.nn as nn
 import pytorch_lightning as pl
 from einops.layers.torch import Rearrange
+from einops import rearrange
+import torch 
 
 # Residual block
 class Residual(pl.LightningModule):
@@ -70,7 +72,7 @@ class EncoderDisjoint(pl.LightningModule):
     def __init__(self, in_channels, out_channels, patch_size):
         super(EncoderDisjoint, self).__init__()
         self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=patch_size, stride=patch_size),
+            nn.Conv2d(in_channels, out_channels, kernel_size=patch_size, stride=patch_size, bias=False),
             Rearrange('b d h w -> b (h w) d')
         )
 
@@ -83,8 +85,21 @@ class DecoderDisjoint(pl.LightningModule):
         super(DecoderDisjoint, self).__init__()
         self.decoder = nn.Sequential(
             Rearrange('b (h w) d -> b d h w', h=num_patches_side, w=num_patches_side),
-            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=patch_size, stride=patch_size)
+            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=patch_size, stride=patch_size, bias=False)
         ) 
 
     def forward(self, x):
         return self.decoder(x)
+
+class DecoderSampling(pl.LightningModule):
+    def __init__(self, in_channels, out_channels, patch_size, num_patch_side) -> None:
+        super().__init__()
+        self.num_patches_side = num_patch_side
+        self.patches = nn.Parameter(torch.randn((in_channels, out_channels, patch_size, patch_size)))
+        
+    def forward(self, x):
+        x = rearrange(x,'b (h w) d -> b h w d', h=self.num_patches_side, w=self.num_patches_side)
+        x = torch.nn.functional.softmax(x, dim=-1).argmax
+        
+
+

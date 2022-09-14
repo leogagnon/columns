@@ -25,5 +25,7 @@ if __name__ == '__main__':
         model_class=GLOM, 
         datamodule_class=MNISTDataset, 
         seed_everything_default=42, 
-        save_config_overwrite=True)
+        save_config_overwrite=True,
+        parser_kwargs={"parser_mode": "omegaconf"}
+        )
     

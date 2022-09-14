@@ -1,7 +1,7 @@
 from typing import Optional, Union, Any, Callable
 from torchvision.transforms import Compose, ToTensor, Normalize
 from pl_bolts.datamodules import MNISTDataModule
-from custom_transforms import GaussianNoise, RandomPatchErasing, CleanCorruptPair
+from custom_transforms import GaussianNoise
 
 class MNISTDataset(MNISTDataModule):
     def __init__(
@@ -25,13 +25,9 @@ class MNISTDataset(MNISTDataModule):
 
         
     def default_transforms(self) -> Callable:
-        base_transform = Compose([
+        transform = Compose([
                 ToTensor(),
-                Normalize((0.5,), (0.5,)),
-            ])
-        corrupt_transform = Compose([
-                GaussianNoise(mean=0., std=0.1),
-                RandomPatchErasing(patch_size=4, p=0.3)
+                Normalize((0.5,), (0.5,))
             ])
         
-        return CleanCorruptPair(base_transform, corrupt_transform)
+        return transform

@@ -6,5 +6,4 @@ import os
 args = ' '.join(sys.argv[1:])
 logdir = os.environ['SCRATCH']
 datadir = os.environ['SCRATCH']
-
-os.system('/home/mila/l/leo.gagnon/columns/venv/bin/python main.py fit --config default_config.yaml' + ' --logdir=' + logdir + ' --data.data_dir=' + datadir + ' ' + args)
+os.system('/home/mila/l/leo.gagnon/columns/venv/bin/python ~/columns/src/main.py fit --config config.yaml' + ' --logdir=' + logdir + ' --data.data_dir=' + datadir + ' ' + args)
